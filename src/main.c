@@ -40,6 +40,8 @@ int isHeating = 0;
 int heaterOnAbove = 2900;
 int heaterOffBelow = 2800;
 
+struct mgos_i2c *myi2c;
+
 #define GPIO_PIN_ADDR(i)        (GPIO_PIN0_ADDRESS + i*4)
 
 
@@ -61,6 +63,14 @@ static int readVoltage(void) {
   return average;
 }
 
+static int readVoltageI2C(void) {
+  mgos_i2c_read(&myi2c)
+}
+
+static void configureADS1015(void) {
+  
+}
+
 static int adjustHeater(int voltage) {
   if (voltage < heaterOffBelow) {
     mgos_gpio_write(PIN_HEATER_RELAY, 0);
@@ -78,10 +88,10 @@ static void measureTemp() {
   LOG(LL_INFO, ("Measuring temperature"));
 	int voltage = 0;
 
-	mgos_gpio_write(PIN_THERM_DRIVE, 0);
-	mgos_msleep(1);
-	voltage = readVoltage();
-	mgos_gpio_write(PIN_THERM_DRIVE, 1);
+	// mgos_gpio_write(PIN_THERM_DRIVE, 0);
+	// mgos_msleep(1);
+	voltage = readVoltageI2C();
+	// mgos_gpio_write(PIN_THERM_DRIVE, 1);
 
   int heating = adjustHeater(voltage);
 
@@ -133,7 +143,7 @@ static void aws_shadow_state_handler(void *arg, enum mgos_aws_shadow_event ev,
 }
 
 enum mgos_app_init_result mgos_app_init(void) {
-  LOG(LL_INFO, ("Starting Soil Temp Controller v0.2"));
+  LOG(LL_INFO, ("Starting Soil Temp Controller v0.3"));
 
   init = false;
   //mgos_gpio_init();
@@ -156,13 +166,9 @@ enum mgos_app_init_result mgos_app_init(void) {
   mgos_gpio_set_mode(PIN_HEATER_RELAY, MGOS_GPIO_MODE_OUTPUT);
   mgos_gpio_write(PIN_HEATER_RELAY, 0); 
 
-  if (!mgos_gpio_set_pull(INPUT_PIN, MGOS_GPIO_PULL_NONE)) {
-     LOG(LL_ERROR, ("Failed to pull"));
-     return MGOS_INIT_APP_INIT_FAILED;
-  }
-  mgos_gpio_set_mode(INPUT_PIN, MGOS_GPIO_MODE_INPUT);
+  myi2c = mgos_i2c_create(mgos_i2c_get_global());
 
-  mgos_adc_enable(0);
+  // mgos_adc_enable(0);
   mgos_aws_shadow_set_state_handler(aws_shadow_state_handler, NULL);
 
   mgos_set_timer(POLL_PERIOD, 1, timer_cb, NULL);
