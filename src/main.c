@@ -16,6 +16,8 @@
  */
 
 #include "eagle_soc.h"
+#include "ads1015.h"
+
 #include "mgos.h"
 #include "mgos_adc.h"
 #include "mgos_aws_shadow.h"
@@ -30,9 +32,11 @@
 #define PIN_HEATER_RELAY 5 //D1
 #define POLL_PERIOD 30000
 
-int D_PINS[] = {PIN_THERM_DRIVE};
-int INPUT_PIN = 14;
-int PIN_COUNT = 1;
+#define ADS1015_ENABLED true
+
+// int D_PINS[] = {PIN_THERM_DRIVE};
+// int INPUT_PIN = 14;
+// int PIN_COUNT = 1;
 bool init = false;
 int NUMSAMPLES = 5;
 int isHeating = 0;
@@ -40,35 +44,29 @@ int isHeating = 0;
 int heaterOnAbove = 2900;
 int heaterOffBelow = 2800;
 
-struct mgos_i2c *myi2c;
-
 #define GPIO_PIN_ADDR(i)        (GPIO_PIN0_ADDRESS + i*4)
 
 
 static int readVoltage(void) {
-  int i;
-  int samples[NUMSAMPLES];
-  int average;
+#if ADS1015_ENABLED
+  uint16_t val;
+  ads1015ReadADC_SingleEnded(3, &val);
+  return (int) val;    
+#else
+  return mgos_adc_read(0);
+#endif
+}
+
+static int measureVoltage(void) {
+  int samples = NUMSAMPLES;
+  int sum = 0;
  
   // take N samples in a row, with a slight delay
-  for (i=0; i< NUMSAMPLES; i++) {
-   samples[i] = mgos_adc_read(0);
-   	mgos_msleep(100);
+  while (--samples > 0) {
+    sum += readVoltage();
+    mgos_msleep(100);
   }
- 
-  average = 0;
-  for (i=0; i< NUMSAMPLES; i++) {
-     average += samples[i];
-  }
-  return average;
-}
-
-static int readVoltageI2C(void) {
-  mgos_i2c_read(&myi2c)
-}
-
-static void configureADS1015(void) {
-  
+  return sum;
 }
 
 static int adjustHeater(int voltage) {
@@ -98,8 +96,8 @@ static void measureTemp() {
 	char topic[34];
 	sprintf(topic,"devices/%s/temperature", mgos_sys_config_get_device_id());
 	// LOG(LL_INFO, ("Published '%s'[%d] to topic '%s'",buffer, size, topic));
-	mgos_mqtt_pubf(topic, 0, false, "{ t: %d, h: %d }", voltage, heating);   /* Publish */
-  // mgos_mqtt_pubf(topic, 0, false, "{ t: %d }", voltage)
+  /* Publish */
+	mgos_mqtt_pubf(topic, 0, false, "{ t: %d, h: %d, mode: \"ads\", samples: %d}", voltage, heating, NUMSAMPLES);
 }
 
 void timer_cb(void *arg) {
@@ -147,17 +145,17 @@ enum mgos_app_init_result mgos_app_init(void) {
 
   init = false;
   //mgos_gpio_init();
-  for (int i=0; i<PIN_COUNT; i++) {    
-  	LOG(LL_INFO,("Initializing GPIO[%d]",i));  
-    int pin = D_PINS[i];
-    mgos_gpio_set_mode(pin, MGOS_GPIO_MODE_OUTPUT);
-    GPIO_REG_WRITE(GPIO_PIN_ADDR(GPIO_ID_PIN(pin)), GPIO_PIN_PAD_DRIVER_SET(GPIO_PAD_DRIVER_ENABLE));  
-    if (!mgos_gpio_set_pull(pin, MGOS_GPIO_PULL_NONE)) {
-      LOG(LL_ERROR, ("Failed to set pull resistor"));
-      return MGOS_INIT_APP_INIT_FAILED;
-    }
-    mgos_gpio_write(pin, 1); 
-  }
+  // for (int i=0; i<PIN_COUNT; i++) {    
+  // 	LOG(LL_INFO,("Initializing GPIO[%d]",i));  
+  //   int pin = D_PINS[i];
+  //   mgos_gpio_set_mode(pin, MGOS_GPIO_MODE_OUTPUT);
+  //   GPIO_REG_WRITE(GPIO_PIN_ADDR(GPIO_ID_PIN(pin)), GPIO_PIN_PAD_DRIVER_SET(GPIO_PAD_DRIVER_ENABLE));  
+  //   if (!mgos_gpio_set_pull(pin, MGOS_GPIO_PULL_NONE)) {
+  //     LOG(LL_ERROR, ("Failed to set pull resistor"));
+  //     return MGOS_INIT_APP_INIT_FAILED;
+  //   }
+  //   mgos_gpio_write(pin, 1); 
+  // }
 
   if (!mgos_gpio_set_pull(PIN_HEATER_RELAY, MGOS_GPIO_PULL_UP)) {
      LOG(LL_ERROR, ("Failed to pull"));
@@ -166,11 +164,13 @@ enum mgos_app_init_result mgos_app_init(void) {
   mgos_gpio_set_mode(PIN_HEATER_RELAY, MGOS_GPIO_MODE_OUTPUT);
   mgos_gpio_write(PIN_HEATER_RELAY, 0); 
 
-  myi2c = mgos_i2c_create(mgos_i2c_get_global());
+#if ADS1015_ENABLED
+  ads1015Init();
+#else 
+  mgos_adc_enable(0);
+#endif
 
-  // mgos_adc_enable(0);
   mgos_aws_shadow_set_state_handler(aws_shadow_state_handler, NULL);
-
   mgos_set_timer(POLL_PERIOD, 1, timer_cb, NULL);
   init = true;
   return MGOS_APP_INIT_SUCCESS;
